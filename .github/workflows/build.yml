@@ -1,0 +1,22 @@
+name: Build and Test
+
+on:
+  pull_request:
+    branches:
+      - main 
+  push:
+    branches:
+      - main 
+
+jobs:
+  build-linux:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig
+        run: "sudo snap install zig --classic --beta"
+
+      - name: Build & Test
+        run: zig build test
