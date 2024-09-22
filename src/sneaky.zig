@@ -4,7 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 
-pub const CliError = error{ InvalidArg, InvalidNumberOfArgs, CliArgumentNotFound, InvalidCommand, HelpCommand, IncorrectArgumentType, RequiredArgumentNotFound };
+pub const CliError = error{ InvalidArg, InvalidNumberOfArgs, CliArgumentNotFound, InvalidCommand, HelpCommand, IncorrectArgumentType, RequiredArgumentNotFound, UnexpectedCliType, NonStructPassed };
 
 const ArgMetadata = struct {
     key: []const u8,
@@ -99,7 +99,7 @@ pub fn Snek(comptime CliInterface: type) type {
         pub fn parse(self: *Self) CliError!CliInterface {
             if (!self.isStruct()) {
                 std.debug.print("Struct must be passed to parse function. Type: {any} found", .{@TypeOf(CliInterface)});
-                return;
+                return CliError.NonStructPassed;
             }
 
             const interface: CliInterface = undefined;
@@ -135,38 +135,44 @@ pub fn Snek(comptime CliInterface: type) type {
                             continue :unwrap_for;
                         },
                         else => {
+                            // Check if there is a default value, if there is, move on (same case as an optional). Else, error case
+                            if (field.default_value) continue :unwrap_for;
+
                             std.debug.print("Required arugment {s} was not found in CLI flags. Check -help menu for required flags", .{field.name});
                             return CliError.RequiredArgumentNotFound;
                         },
                     }
                 }
 
-                // Write data to struct field based on typ witin arg. Arg, at this point, should never be null
+                // Write data to struct field based on typ witin arg. Arg, at this point, should never be null since we capture that case above
                 const serialized_arg = arg.?;
                 switch (@typeInfo(serialized_arg.typ)) {
                     .Bool => {
-                        @field(&cli_reflected, serialized_arg.key) = try self.parseBool(serialized_arg.key);
+                        @field(&interface, serialized_arg.key) = try self.parseBool(serialized_arg.key);
                     },
                     .Int => {
-                        @field(&cli_reflected, serialized_arg.key) = try self.parseBool(serialized_arg.key);
+                        @field(&interface, serialized_arg.key) = try self.parseNumeric(serialized_arg.key);
                     },
                     .Float => {
-                        @field(&cli_reflected, serialized_arg.key) = try self.parseBool(serialized_arg.key);
+                        @field(&interface, serialized_arg.key) = try self.parseNumeric(serialized_arg.key);
                     },
                     .Pointer => {
                         // .Pointer is for strings since the underlying type is []const u8 which is a .Pointer type
-                        if (serialized_arg.typ.Pointer.size == .Slice and serialized_arg.typ.Pointer.child == u8) {}
+                        if (serialized_arg.typ.Pointer.size == .Slice and serialized_arg.typ.Pointer.child == u8) {
+                            // At this point, just store the string.
+                            @field(&interface, serialized_arg.key) = serialized_arg.key;
+                        }
                     },
-                    .Struct => {},
+                    .Struct => {
+                        return CliError.UnexpectedCliType;
+                    },
                     else => {
-                        @panic("unexpected type received in CLI parser");
+                        return CliError.UnexpectedCliType;
                     },
                 }
             }
 
-            // Check that all struct fields are set and we are not missing any required fields. If we are, error.
-            // Track which fields are missing as well so we can reflect that back to the user
-            try self.checkAllStructArgs(cli_reflected);
+            return interface;
         }
 
         // ## Helper Functions ##
@@ -186,12 +192,12 @@ pub fn Snek(comptime CliInterface: type) type {
                 // Remove the - without calling std.mem
                 const arg_stripped = arg[1..];
 
-                // Help command is treated as an exit case to display the help menu. This is the same way that Go does it in Flags
+                // Help command is treated as an exit case to display the help menu. This is the same way that Go does it in the Flag package
                 // https://cs.opensource.google/go/go/+/refs/tags/go1.23.1:src/flag/flag.go;l=1111
-                if (std.mem.eql(arg_stripped, "help") or std.mem.eql(u8, arg_stripped, "h")) return CliError.HelpCommand;
+                if (std.mem.eql(u8, arg_stripped, "help") or std.mem.eql(u8, arg_stripped, "h")) return CliError.HelpCommand;
 
                 // Split on all data *after* the initial - and curate a roster of key/value arguments seerated by the =
-                const split_arg = std.mem.split(u8, arg_stripped, "=");
+                var split_arg = std.mem.split(u8, arg_stripped, "=");
                 const arg_key = split_arg.next() orelse "";
                 const arg_val = split_arg.next() orelse "";
 
@@ -207,22 +213,16 @@ pub fn Snek(comptime CliInterface: type) type {
                 }
 
                 // No struct field of this name was found. Send error instead of moving on
-                if (!self.checkForKey(arg_key_d)) CliError.InvalidCommand;
+                if (!self.checkForKey(arg_key_d)) return CliError.InvalidCommand;
 
                 // .typ is used to eventually switch when we marshal the type of the value into the struct field
-                try self.arg_metadata.put(arg_key_d, .{ .key = arg_key_d, .value = arg_val_d, .optional = self.isOptional(arg_key_d), .typ = extractTypeInfoFromKey(arg_key_d) });
+                try self.arg_metadata.put(arg_key_d, .{ .key = arg_key_d, .value = std.mem.trim(u8, arg_val_d, " "), .optional = self.isOptional(arg_key_d), .typ = extractTypeInfoFromKey(arg_key_d) });
             }
         }
 
         fn checkForKey(self: *Self, key: []const u8) bool {
             _ = self;
             return @hasField(CliInterface, key);
-        }
-
-        /// Check all fields of the struct to ensure that all non-optional values are set and non are missing
-        fn checkAllStructArgs(self: *Self, comptime T: type) CliError!void {
-            _ = self;
-            _ = T;
         }
 
         fn extractTypeInfoFromKey(key: []const u8) std.builtin.Type {
@@ -257,16 +257,34 @@ pub fn Snek(comptime CliInterface: type) type {
         }
 
         // ## Parser Functions ##
+
         fn parseBool(self: Self, parse_value: []const u8) !void {
             _ = self;
-            _ = parse_value;
+            if (std.mem.eql(u8, parse_value, "True") or std.mem.eql(u8, parse_value, "true") or std.mem.eql(u8, parse_value, "On") or std.mem.eql(u8, parse_value, "on")) {
+                return true;
+            } else if (std.mem.eql(u8, parse_value, "False") or std.mem.eql(u8, parse_value, "false") or std.mem.eql(u8, parse_value, "Off") or std.mem.eql(u8, parse_value, "off")) {
+                return false;
+            }
+
+            return error.NotBoolean;
         }
 
-        fn parseNumeric(self: Self, parse_value: []const u8) !void {
+        fn parseNumeric(self: Self, comptime T: type, parse_value: []const u8) !void {
             _ = self;
-            _ = parse_value;
+            switch (@typeInfo(T)) {
+                .Int => {
+                    return std.fmt.parseInt(T, parse_value, 10);
+                },
+                .Float => {
+                    return std.fmt.parseFloat(T, parse_value);
+                },
+                else => {
+                    return error.UnrecognizedSimpleType;
+                },
+            }
         }
 
+        // Unused - Keep around in case of more advanced string parsing
         fn parseString(self: Self, parse_value: []const u8) !void {
             _ = self;
             _ = parse_value;
