@@ -2,22 +2,22 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const assert = std.debug.assert;
 
-// cli tool that supports arguments like -cooamdn=asdasd
-// Supports optional arguments (use optionals in struct to determine if they are required or not)
-// Supports default arguments if there is an existing value in the struct.
-// If the stdin args do not match or are missing (no optional) throw an error
-// Actually the return data IS the input struct. Like yamlz. I.e. the struct will hold default fields if non are parsed (has to  be optionals)
-// in the end we just return the struct
-// no sub-commands as of now i.e. thing -thing=asdasd etc.. just flat commands for now
-// Dagger - A tool for building robust CLI tools in Zig
+pub const CliError = error{ InvalidArg, InvalidNumberOfArgs, CliArgumentNotFound, InvalidCommand, HelpCommand, IncorrectArgumentType, RequiredArgumentNotFound };
 
-const CliError = error{ InvalidArg, InvalidNumberOfArgs, CliArgumentNotFound, InvalidCommand };
+const ArgMetadata = struct {
+    key: []const u8,
+    value: []const u8,
+    typ: std.builtin.Type,
+    optional: bool,
+};
 
 /// Snek - the primary CLI interface returning the anonnymous struct type for serializing all CLI arguments
 pub fn Snek(comptime CliInterface: type) type {
     return struct {
         allocator: std.mem.Allocator,
+        arg_metadata: std.StringHashMap(ArgMetadata),
         // Using @This() allows for destructuring of whatever this type is (i.e. allowing for metadata parsing of the cli struct)
         const Self = @This();
 
@@ -27,6 +27,7 @@ pub fn Snek(comptime CliInterface: type) type {
         pub fn init(allocator: std.mem.Allocator) !Self {
             return .{
                 .allocator = allocator,
+                .arg_metadata = std.StringHashMap(ArgMetadata).init(allocator),
             };
         }
 
@@ -85,14 +86,17 @@ pub fn Snek(comptime CliInterface: type) type {
             }
         }
 
-        /// Deinitializes memory - Caller is responsible for this
         pub fn deinit(self: *Self) void {
             _ = self;
         }
 
-        /// Primary CLI parser for pasing the incoming args from stdin and the incoming CliInterface to parse out the individual commands/fields
-        /// The return is the struct that is passed. Must be a struct
-        pub fn parse(self: *Self) !CliInterface {
+        /// deinitMem deinitializes abitrary memory
+        pub fn deinitMem(self: *Self, mem: anytype) void {
+            self.allocator.free(mem);
+        }
+
+        /// Primary CLI parser for parsing the incoming args from stdin and the incoming CliInterface to parse out the individual commands/fields
+        pub fn parse(self: *Self) CliError!CliInterface {
             if (!self.isStruct()) {
                 std.debug.print("Struct must be passed to parse function. Type: {any} found", .{@TypeOf(CliInterface)});
                 return;
@@ -100,18 +104,77 @@ pub fn Snek(comptime CliInterface: type) type {
 
             const interface: CliInterface = undefined;
 
-            // Help is easy, we do not need to set nor care about the value
             const cli_reflected = @typeInfo(@TypeOf(interface));
-            _ = cli_reflected;
+
+            // Collect and do some initial checking on passed in flags/values
+            self.collectArgs() catch |e| {
+                switch (e) {
+                    CliError.HelpCommand => {
+                        self.help();
+
+                        return e;
+                    },
+                    CliError.InvalidCommand => {
+                        std.debug.print("Invalid cli command was passed. Please use -help or -h to check help menu for available commands", .{});
+
+                        return e;
+                    },
+                    else => {
+                        return e;
+                    },
+                }
+            };
+
+            unwrap_for: inline for (cli_reflected.Struct.fields) |field| {
+                const arg = self.arg_metadata.get(field.name);
+
+                // If arg does NOT exist and the field is NOT optional, its an error case, so handle accordingly
+                if (!arg) {
+                    switch (@typeInfo(field.type)) {
+                        .Optional => {
+                            continue :unwrap_for;
+                        },
+                        else => {
+                            std.debug.print("Required arugment {s} was not found in CLI flags. Check -help menu for required flags", .{field.name});
+                            return CliError.RequiredArgumentNotFound;
+                        },
+                    }
+                }
+
+                // Write data to struct field based on typ witin arg. Arg, at this point, should never be null
+                const serialized_arg = arg.?;
+                switch (@typeInfo(serialized_arg.typ)) {
+                    .Bool => {
+                        @field(&cli_reflected, serialized_arg.key) = try self.parseBool(serialized_arg.key);
+                    },
+                    .Int => {
+                        @field(&cli_reflected, serialized_arg.key) = try self.parseBool(serialized_arg.key);
+                    },
+                    .Float => {
+                        @field(&cli_reflected, serialized_arg.key) = try self.parseBool(serialized_arg.key);
+                    },
+                    .Pointer => {
+                        // .Pointer is for strings since the underlying type is []const u8 which is a .Pointer type
+                        if (serialized_arg.typ.Pointer.size == .Slice and serialized_arg.typ.Pointer.child == u8) {}
+                    },
+                    .Struct => {},
+                    else => {
+                        @panic("unexpected type received in CLI parser");
+                    },
+                }
+            }
+
+            // Check that all struct fields are set and we are not missing any required fields. If we are, error.
+            // Track which fields are missing as well so we can reflect that back to the user
+            try self.checkAllStructArgs(cli_reflected);
         }
 
         // ## Helper Functions ##
 
-        // Get args from stdin
         fn collectArgs(self: *Self) !void {
             var args = try std.process.argsWithAllocator(self.allocator);
             defer deinit(self);
-            defer self.flushCliArgMap();
+
             // Skip first line, its always the name of the calling function
             _ = args.skip();
 
@@ -120,17 +183,67 @@ pub fn Snek(comptime CliInterface: type) type {
                     return CliError.InvalidCommand;
                 }
 
-                const split_arg = std.mem.split(u8, arg, "=");
+                // Remove the - without calling std.mem
+                const arg_stripped = arg[1..];
+
+                // Help command is treated as an exit case to display the help menu. This is the same way that Go does it in Flags
+                // https://cs.opensource.google/go/go/+/refs/tags/go1.23.1:src/flag/flag.go;l=1111
+                if (std.mem.eql(arg_stripped, "help") or std.mem.eql(u8, arg_stripped, "h")) return CliError.HelpCommand;
+
+                // Split on all data *after* the initial - and curate a roster of key/value arguments seerated by the =
+                const split_arg = std.mem.split(u8, arg_stripped, "=");
                 const arg_key = split_arg.next() orelse "";
                 const arg_val = split_arg.next() orelse "";
 
+                // Dupe memory to avoid issues with string pointer storage
                 const arg_key_d = try self.allocator.dupe(u8, arg_key);
                 const arg_val_d = try self.allocator.dupe(u8, arg_val);
 
-                _ = arg_key_d;
-                _ = arg_val_d;
+                // Check dedup map, if it is true, it was already found, skip adding and key check
+                if (self.arg_metadata.get(arg_key_d)) {
+                    std.debug.print("Warn: Duplicate key {s} passed. Using previous argument!", .{arg_key_d});
 
-                // Now do all the parsing with the struct to insert the value
+                    continue;
+                }
+
+                // No struct field of this name was found. Send error instead of moving on
+                if (!self.checkForKey(arg_key_d)) CliError.InvalidCommand;
+
+                // .typ is used to eventually switch when we marshal the type of the value into the struct field
+                try self.arg_metadata.put(arg_key_d, .{ .key = arg_key_d, .value = arg_val_d, .optional = self.isOptional(arg_key_d), .typ = extractTypeInfoFromKey(arg_key_d) });
+            }
+        }
+
+        fn checkForKey(self: *Self, key: []const u8) bool {
+            _ = self;
+            return @hasField(CliInterface, key);
+        }
+
+        /// Check all fields of the struct to ensure that all non-optional values are set and non are missing
+        fn checkAllStructArgs(self: *Self, comptime T: type) CliError!void {
+            _ = self;
+            _ = T;
+        }
+
+        fn extractTypeInfoFromKey(key: []const u8) std.builtin.Type {
+            const s_enum = std.meta.stringToEnum(CliInterface, key);
+
+            // We assume that the field is already found since it passed the hasKey check. So we do *not* handle the null case.
+            const field_info = std.meta.fieldInfo(CliInterface, s_enum.?);
+
+            return @typeInfo(field_info);
+        }
+
+        fn isOptional(self: *Self, key: []const u8) bool {
+            _ = self;
+
+            switch (extractTypeInfoFromKey(key)) {
+                .Optional => {
+                    return true;
+                },
+                else => {
+                    return false;
+                },
             }
         }
 
@@ -143,15 +256,55 @@ pub fn Snek(comptime CliInterface: type) type {
             return true;
         }
 
-        fn parseStdinArgs() !void {}
+        // ## Parser Functions ##
+        fn parseBool(self: Self, parse_value: []const u8) !void {
+            _ = self;
+            _ = parse_value;
+        }
 
-        fn parseCliInterface() !void {}
+        fn parseNumeric(self: Self, parse_value: []const u8) !void {
+            _ = self;
+            _ = parse_value;
+        }
+
+        fn parseString(self: Self, parse_value: []const u8) !void {
+            _ = self;
+            _ = parse_value;
+        }
     };
 }
 
-test "Test struct with optional fields" {}
+test "Test struct with optional fields" {
+    const T = struct {
+        test_one: ?[]const u8,
+        test_two: ?u32,
+        test_three: ?f64,
+    };
 
-test "test struct with default fields" {}
+    var snek = try Snek(T).init(std.heap.page_allocator);
+    _ = try snek.parse();
+}
+
+test "test struct with default fields" {
+    // Obviously stdin arguments are initially all strings. The datatype used in the struct will be used for the coercion of the type during parsing.
+    // If the coercian step fails to parse the respective value, an error will commence.
+    // This will display the help menu to the user
+    // const test_args = [_][]const u8{ "test", "123", "3.14" };
+
+    const T = struct {
+        default_string: []const u8 = "",
+        default_int: u32 = 420,
+        optional_value: ?f64,
+        default_bool: bool = true, // Technically the bool would have a false default generically due to the nature of bools, but non the less we can either specify or override.
+    };
+
+    var snek = try Snek(T).init(std.heap.page_allocator);
+    _ = try snek.parse();
+
+    //  Validate that hte given default values will not change after parsing unless they are present in the stdin arguments.
+
+    // Validate that the values will change to the incoming stdin arguments
+}
 
 test "test struct with both optionals and defaults fields" {}
 
