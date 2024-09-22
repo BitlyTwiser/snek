@@ -4,12 +4,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 
-pub const CliError = error{ InvalidArg, InvalidNumberOfArgs, CliArgumentNotFound, InvalidCommand, HelpCommand, IncorrectArgumentType, RequiredArgumentNotFound, UnexpectedCliType, NonStructPassed };
+pub const CliError = error{ InvalidArg, InvalidNumberOfArgs, CliArgumentNotFound, InvalidCommand, HelpCommand, IncorrectArgumentType, RequiredArgumentNotFound, UnexpectedCliType, NonStructPassed, OutOfMemory };
 
 const ArgMetadata = struct {
     key: []const u8,
     value: []const u8,
-    typ: std.builtin.Type,
+    comptime typ: std.builtin.Type = type,
     optional: bool,
 };
 
@@ -110,7 +110,7 @@ pub fn Snek(comptime CliInterface: type) type {
             self.collectArgs() catch |e| {
                 switch (e) {
                     CliError.HelpCommand => {
-                        self.help();
+                        try self.help();
 
                         return e;
                     },
@@ -206,23 +206,18 @@ pub fn Snek(comptime CliInterface: type) type {
                 const arg_val_d = try self.allocator.dupe(u8, arg_val);
 
                 // Check dedup map, if it is true, it was already found, skip adding and key check
-                if (self.arg_metadata.get(arg_key_d)) {
+                if (self.arg_metadata.get(arg_key_d)) |_| {
                     std.debug.print("Warn: Duplicate key {s} passed. Using previous argument!", .{arg_key_d});
 
                     continue;
                 }
 
                 // No struct field of this name was found. Send error instead of moving on
-                if (!self.checkForKey(arg_key_d)) return CliError.InvalidCommand;
+                if (!@hasField(CliInterface, arg_key_d)) return CliError.InvalidCommand;
 
                 // .typ is used to eventually switch when we marshal the type of the value into the struct field
                 try self.arg_metadata.put(arg_key_d, .{ .key = arg_key_d, .value = std.mem.trim(u8, arg_val_d, " "), .optional = self.isOptional(arg_key_d), .typ = extractTypeInfoFromKey(arg_key_d) });
             }
-        }
-
-        fn checkForKey(self: *Self, key: []const u8) bool {
-            _ = self;
-            return @hasField(CliInterface, key);
         }
 
         fn extractTypeInfoFromKey(key: []const u8) std.builtin.Type {
