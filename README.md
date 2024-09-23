@@ -6,8 +6,6 @@
 # 🐍snek🐍
 A simple CLI parser building CLI applications in Zig
 
-
-## Note: This is currently under construction and is not yet available for public consumption (hence no releases!)
 # Contents
 [Usage](#usage) |
 [Building the CLI](#build-your-cli) |
