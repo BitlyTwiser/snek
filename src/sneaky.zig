@@ -112,12 +112,12 @@ pub fn Snek(comptime CliInterface: type) type {
                     CliError.HelpCommand => {
                         try self.help();
 
-                        return e;
+                        std.process.exit(0);
                     },
                     CliError.InvalidCommand => {
                         std.debug.print("Invalid cli command was passed. Please use -help or -h to check help menu for available commands", .{});
 
-                        return e;
+                        std.process.exit(0);
                     },
                     else => {
                         return e;
