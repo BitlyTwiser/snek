@@ -9,7 +9,6 @@ pub const CliError = error{ InvalidArg, InvalidNumberOfArgs, CliArgumentNotFound
 const ArgMetadata = struct {
     key: []const u8,
     value: []const u8,
-    comptime typ: type = type,
     optional: bool,
 };
 
@@ -102,7 +101,7 @@ pub fn Snek(comptime CliInterface: type) type {
                 return CliError.NonStructPassed;
             }
 
-            const interface: CliInterface = undefined;
+            var interface: CliInterface = undefined;
 
             const cli_reflected = @typeInfo(@TypeOf(interface));
 
@@ -145,22 +144,31 @@ pub fn Snek(comptime CliInterface: type) type {
                 }
 
                 // Write data to struct field based on typ witin arg. Arg, at this point, should never be null since we capture that case above
+                comptime var field_type: std.builtin.Type = undefined;
                 const serialized_arg = arg.?;
-                switch (@typeInfo(serialized_arg.typ)) {
+                // handle child case of optional type to get true base type for optional support
+                if (@typeInfo(field.type) == .Optional) {
+                    const i = @typeInfo(field.type);
+                    field_type = @typeInfo(i.Optional.child);
+                } else {
+                    field_type = @typeInfo(field.type);
+                }
+
+                switch (field_type) {
                     .Bool => {
-                        @field(&interface, serialized_arg.key) = try self.parseBool(serialized_arg.key);
+                        @field(&interface, field.name) = try self.parseBool(serialized_arg.key);
                     },
                     .Int => {
-                        @field(&interface, serialized_arg.key) = try self.parseNumeric(serialized_arg.key);
+                        @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.key);
                     },
                     .Float => {
-                        @field(&interface, serialized_arg.key) = try self.parseNumeric(serialized_arg.key);
+                        @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.key);
                     },
                     .Pointer => {
                         // .Pointer is for strings since the underlying type is []const u8 which is a .Pointer type
-                        if (serialized_arg.typ.Pointer.size == .Slice and serialized_arg.typ.Pointer.child == u8) {
+                        if (field_type.Pointer.size == .Slice and field_type.Pointer.child == u8) {
                             // At this point, just store the string.
-                            @field(&interface, serialized_arg.key) = serialized_arg.key;
+                            @field(&interface, field.name) = serialized_arg.key;
                         }
                     },
                     .Struct => {
@@ -219,21 +227,23 @@ pub fn Snek(comptime CliInterface: type) type {
                 // No struct field of this name was found. Send error instead of moving on
                 if (!self.hasKey(arg_key_d)) return CliError.InvalidCommand;
 
-                var is_optional: bool = false;
-                comptime var typ: type = undefined;
                 inline for (cli_reflected.Struct.fields) |field| {
-                    switch (@typeInfo(field.type)) {
-                        .Optional => {
-                            is_optional = true;
-                        },
-                        else => {
-                            typ = @TypeOf(field.type);
-                        },
+                    if (std.mem.eql(u8, field.name, arg_key_d)) {
+                        switch (@typeInfo(field.type)) {
+                            // Extract the type of the child since that is what we are after
+                            .Optional => {
+                                std.debug.print("here?\n", .{});
+                                try self.arg_metadata.put(arg_key_d, .{ .key = arg_key_d, .value = std.mem.trim(u8, arg_val_d, " "), .optional = true });
+                            },
+                            // For all other cases just record the type
+                            else => {
+                                std.debug.print("here? else\n", .{});
+                                std.debug.print("{any}\n", .{@typeInfo(field.type)});
+                                try self.arg_metadata.put(arg_key_d, .{ .key = arg_key_d, .value = std.mem.trim(u8, arg_val_d, " "), .optional = false });
+                            },
+                        }
                     }
                 }
-
-                // .typ is used to eventually switch when we marshal the type of the value into the struct field
-                try self.arg_metadata.put(arg_key_d, .{ .key = arg_key_d, .value = std.mem.trim(u8, arg_val_d, " "), .optional = is_optional, .typ = typ });
             }
         }
 
@@ -258,7 +268,7 @@ pub fn Snek(comptime CliInterface: type) type {
 
         // ## Parser Functions ##
 
-        fn parseBool(self: Self, parse_value: []const u8) !void {
+        fn parseBool(self: Self, parse_value: []const u8) !bool {
             _ = self;
             if (std.mem.eql(u8, parse_value, "True") or std.mem.eql(u8, parse_value, "true") or std.mem.eql(u8, parse_value, "On") or std.mem.eql(u8, parse_value, "on")) {
                 return true;
@@ -269,7 +279,7 @@ pub fn Snek(comptime CliInterface: type) type {
             return error.NotBoolean;
         }
 
-        fn parseNumeric(self: Self, comptime T: type, parse_value: []const u8) !void {
+        fn parseNumeric(self: Self, comptime T: type, parse_value: []const u8) !T {
             _ = self;
             switch (@typeInfo(T)) {
                 .Int => {
