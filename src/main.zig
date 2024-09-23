@@ -16,5 +16,5 @@ pub fn main() !void {
     const parsed_cli = try cli.parse();
 
     // Necessary is skipped here to showcase optional values being ignored
-    std.debug.print("{s} {d} {any} {s} {s}", .{ parsed_cli.name, parsed_cli.location, parsed_cli.exists, parsed_cli.default_name, parsed_cli.filled_optional orelse "badvalue" });
+    std.debug.print("Name: {s}\n Location: {d}\n Exists: {any}\n Defualt value: {s}\n Filled Optional: {s}\n", .{ parsed_cli.name, parsed_cli.location, parsed_cli.exists, parsed_cli.default_name, parsed_cli.filled_optional orelse "badvalue" });
 }

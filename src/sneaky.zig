@@ -86,7 +86,7 @@ pub fn Snek(comptime CliInterface: type) type {
         }
 
         pub fn deinit(self: *Self) void {
-            _ = self;
+            self.arg_metadata.clearAndFree();
         }
 
         /// deinitMem deinitializes abitrary memory
@@ -124,59 +124,67 @@ pub fn Snek(comptime CliInterface: type) type {
                 }
             };
 
-            unwrap_for: inline for (cli_reflected.Struct.fields) |field| {
+            inline for (cli_reflected.Struct.fields) |field| {
                 const arg = self.arg_metadata.get(field.name) orelse null;
 
                 // If arg does NOT exist and the field is NOT optional, its an error case, so handle accordingly
                 if (arg == null) {
                     switch (@typeInfo(field.type)) {
                         .Optional => {
-                            break :unwrap_for;
+                            // If this is an optional and there is no default value, set field value to null entirely (its an optional after all)
+                            if (field.default_value == null) {
+                                @field(&interface, field.name) = null;
+                            }
                         },
                         else => {
-                            // Check if there is a default value, if there is, move on (same case as an optional). Else, error case
-                            if (field.default_value == null) break :unwrap_for;
-
-                            std.debug.print("Required arugment {s} was not found in CLI flags. Check -help menu for required flags", .{field.name});
-                            return CliError.RequiredArgumentNotFound;
+                            // Check if there is a default value, if there is, move on (same case as an optional). Else, error case since its required and has no value
+                            if (field.default_value == null) {
+                                std.debug.print("Required arugment {s} was not found in CLI flags. Check -help menu for required flags", .{field.name});
+                                return CliError.RequiredArgumentNotFound;
+                            } else {
+                                // Actually extract the value
+                                const dvalue_aligned: *align(field.alignment) const anyopaque = @alignCast(field.default_value.?);
+                                const value = @as(*const field.type, @ptrCast(dvalue_aligned)).*;
+                                @field(&interface, field.name) = value;
+                            }
                         },
                     }
-                }
-
-                // Write data to struct field based on typ witin arg. Arg, at this point, should never be null since we capture that case above
-                comptime var field_type: std.builtin.Type = undefined;
-                const serialized_arg = arg.?;
-                // handle child case of optional type to get true base type for optional support
-                if (@typeInfo(field.type) == .Optional) {
-                    const i = @typeInfo(field.type);
-                    field_type = @typeInfo(i.Optional.child);
                 } else {
-                    field_type = @typeInfo(field.type);
-                }
+                    // Write data to struct field based on typ witin arg. Arg, at this point, should never be null since we capture that case above
+                    comptime var field_type: std.builtin.Type = undefined;
+                    const serialized_arg = arg.?;
+                    // handle child case of optional type to get true base type for optional support
+                    if (@typeInfo(field.type) == .Optional) {
+                        const i = @typeInfo(field.type);
+                        field_type = @typeInfo(i.Optional.child);
+                    } else {
+                        field_type = @typeInfo(field.type);
+                    }
 
-                switch (field_type) {
-                    .Bool => {
-                        @field(&interface, field.name) = try self.parseBool(serialized_arg.value);
-                    },
-                    .Int => {
-                        @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.value);
-                    },
-                    .Float => {
-                        @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.value);
-                    },
-                    .Pointer => {
-                        // .Pointer is for strings since the underlying type is []const u8 which is a .Pointer type
-                        if (field_type.Pointer.size == .Slice and field_type.Pointer.child == u8) {
-                            // At this point, just store the string.
-                            @field(&interface, field.name) = serialized_arg.value;
-                        }
-                    },
-                    .Struct => {
-                        return CliError.UnexpectedCliType;
-                    },
-                    else => {
-                        return CliError.UnexpectedCliType;
-                    },
+                    switch (field_type) {
+                        .Bool => {
+                            @field(&interface, field.name) = try self.parseBool(serialized_arg.value);
+                        },
+                        .Int => {
+                            @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.value);
+                        },
+                        .Float => {
+                            @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.value);
+                        },
+                        .Pointer => {
+                            // .Pointer is for strings since the underlying type is []const u8 which is a .Pointer type
+                            if (field_type.Pointer.size == .Slice and field_type.Pointer.child == u8) {
+                                // At this point, just store the string.
+                                @field(&interface, field.name) = serialized_arg.value;
+                            }
+                        },
+                        .Struct => {
+                            return CliError.UnexpectedCliType;
+                        },
+                        else => {
+                            return CliError.UnexpectedCliType;
+                        },
+                    }
                 }
             }
 
@@ -187,7 +195,6 @@ pub fn Snek(comptime CliInterface: type) type {
 
         fn collectArgs(self: *Self) !void {
             var args = try std.process.argsWithAllocator(self.allocator);
-            defer deinit(self);
 
             // Skip first line, its always the name of the calling function
             _ = args.skip();
