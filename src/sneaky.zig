@@ -9,7 +9,7 @@ pub const CliError = error{ InvalidArg, InvalidNumberOfArgs, CliArgumentNotFound
 const ArgMetadata = struct {
     key: []const u8,
     value: []const u8,
-    comptime typ: std.builtin.Type = type,
+    comptime typ: type = type,
     optional: bool,
 };
 
@@ -126,17 +126,17 @@ pub fn Snek(comptime CliInterface: type) type {
             };
 
             unwrap_for: inline for (cli_reflected.Struct.fields) |field| {
-                const arg = self.arg_metadata.get(field.name);
+                const arg = self.arg_metadata.get(field.name) orelse null;
 
                 // If arg does NOT exist and the field is NOT optional, its an error case, so handle accordingly
-                if (!arg) {
+                if (arg == null) {
                     switch (@typeInfo(field.type)) {
                         .Optional => {
-                            continue :unwrap_for;
+                            break :unwrap_for;
                         },
                         else => {
                             // Check if there is a default value, if there is, move on (same case as an optional). Else, error case
-                            if (field.default_value) continue :unwrap_for;
+                            if (field.default_value == null) break :unwrap_for;
 
                             std.debug.print("Required arugment {s} was not found in CLI flags. Check -help menu for required flags", .{field.name});
                             return CliError.RequiredArgumentNotFound;
@@ -184,6 +184,10 @@ pub fn Snek(comptime CliInterface: type) type {
             // Skip first line, its always the name of the calling function
             _ = args.skip();
 
+            const interface: CliInterface = undefined;
+
+            const cli_reflected = @typeInfo(@TypeOf(interface));
+
             while (args.next()) |arg| {
                 if (arg[0] != '-') {
                     return CliError.InvalidCommand;
@@ -213,33 +217,34 @@ pub fn Snek(comptime CliInterface: type) type {
                 }
 
                 // No struct field of this name was found. Send error instead of moving on
-                if (!@hasField(CliInterface, arg_key_d)) return CliError.InvalidCommand;
+                if (!self.hasKey(arg_key_d)) return CliError.InvalidCommand;
+
+                var is_optional: bool = false;
+                comptime var typ: type = undefined;
+                inline for (cli_reflected.Struct.fields) |field| {
+                    switch (@typeInfo(field.type)) {
+                        .Optional => {
+                            is_optional = true;
+                        },
+                        else => {
+                            typ = @TypeOf(field.type);
+                        },
+                    }
+                }
 
                 // .typ is used to eventually switch when we marshal the type of the value into the struct field
-                try self.arg_metadata.put(arg_key_d, .{ .key = arg_key_d, .value = std.mem.trim(u8, arg_val_d, " "), .optional = self.isOptional(arg_key_d), .typ = extractTypeInfoFromKey(arg_key_d) });
+                try self.arg_metadata.put(arg_key_d, .{ .key = arg_key_d, .value = std.mem.trim(u8, arg_val_d, " "), .optional = is_optional, .typ = typ });
             }
         }
 
-        fn extractTypeInfoFromKey(key: []const u8) std.builtin.Type {
-            const s_enum = std.meta.stringToEnum(CliInterface, key);
-
-            // We assume that the field is already found since it passed the hasKey check. So we do *not* handle the null case.
-            const field_info = std.meta.fieldInfo(CliInterface, s_enum.?);
-
-            return @typeInfo(field_info);
-        }
-
-        fn isOptional(self: *Self, key: []const u8) bool {
+        fn hasKey(self: *Self, key: []const u8) bool {
             _ = self;
 
-            switch (extractTypeInfoFromKey(key)) {
-                .Optional => {
-                    return true;
-                },
-                else => {
-                    return false;
-                },
+            inline for (std.meta.fields(CliInterface)) |field| {
+                if (std.mem.eql(u8, key, field.name)) return true;
             }
+
+            return false;
         }
 
         // Ensures passed in value is a struct. It cannot be anything else so strict checking is applied to public functions
