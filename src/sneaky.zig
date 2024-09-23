@@ -4,7 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 
-pub const CliError = error{ InvalidArg, InvalidNumberOfArgs, CliArgumentNotFound, InvalidCommand, HelpCommand, IncorrectArgumentType, RequiredArgumentNotFound, UnexpectedCliType, NonStructPassed, OutOfMemory };
+pub const CliError = error{ InvalidArg, InvalidNumberOfArgs, CliArgumentNotFound, InvalidCommand, HelpCommand, IncorrectArgumentType, RequiredArgumentNotFound, UnexpectedCliType, NonStructPassed, OutOfMemory, UnrecognizedSimpleType, Overflow, InvalidCharacter, NotBoolean };
 
 const ArgMetadata = struct {
     key: []const u8,
@@ -232,13 +232,10 @@ pub fn Snek(comptime CliInterface: type) type {
                         switch (@typeInfo(field.type)) {
                             // Extract the type of the child since that is what we are after
                             .Optional => {
-                                std.debug.print("here?\n", .{});
                                 try self.arg_metadata.put(arg_key_d, .{ .key = arg_key_d, .value = std.mem.trim(u8, arg_val_d, " "), .optional = true });
                             },
                             // For all other cases just record the type
                             else => {
-                                std.debug.print("here? else\n", .{});
-                                std.debug.print("{any}\n", .{@typeInfo(field.type)});
                                 try self.arg_metadata.put(arg_key_d, .{ .key = arg_key_d, .value = std.mem.trim(u8, arg_val_d, " "), .optional = false });
                             },
                         }
