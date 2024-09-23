@@ -51,6 +51,8 @@ Snek builds dynamic (yet simple) CLI's using zigs meta programming to infer the 
 
 When the user goes to interact with the application, they can now utilize the flags you have established to run specific commands.
 
+See the [completed](#example---full-execution) and functional example below or checkout the [main file](./src/main.zig) in the repo for a full working example as well.
+
 #### Items to note:
 1. If the user does not supply a value and the field is *not* otional, that is a failure case and a message is displayed to the user
 2. If there is a default value on the field of the struct and a vale is not passed for that field, it is treated as an *optional* case and will use the static value (i.e. no error message and value is set)
@@ -78,7 +80,7 @@ When the user goes to interact with the application, they can now utilize the fl
 #### Examples
 
 Using the above struct as a  reference, here are a few examples of calling the CLI:
-##### Help
+##### Example - Help Command
 ```
 ./<yourappname> -help
 
@@ -89,12 +91,12 @@ Using the above struct as a  reference, here are a few examples of calling the C
 
 Note: As you can see, the optionals are just that, *optional*. They are not required by your users and can be checked in the calling code in the standard ways that Zig handles optionals.
 This is a design decisions allowing flexibility over the CLI to not lock users into using every flag etc..
-##### Optionals
+##### Example - Optionals
 ````
 ./<yourappname> -bool_test=true -word="I am a word!"
 ````
 
-##### Defaults:
+##### Example - Defaults:
 ```
 ./<yourappname> -bool_test=true -word="I am a word!"
 
@@ -102,6 +104,37 @@ This is a design decisions allowing flexibility over the CLI to not lock users i
 
 
 ./<yourappname> -bool_test=true -word="I am a word!" -test_defaults="I am a different word!"
+```
+
+
+##### Example - Full execution
+```
+const std = @import("std");
+const snek = @import("lib.zig").Snek;
+
+// Binary is also compiled for showcasing how to use the API
+const T = struct {
+    name: []const u8,
+    location: u32,
+    exists: bool,
+    necessary: ?bool,
+    filled_optional: ?[]const u8,
+    default_name: []const u8 = "test default name",
+};
+
+// Example command after compilation:
+// ./zig-out/bin/snek -name="test mctest" -location=420 -exists=true
+pub fn main() !void {
+    var cli = try snek(T).init(std.heap.page_allocator);
+    const parsed_cli = try cli.parse();
+
+    // Necessary is skipped here to showcase optional values being ignored
+    std.debug.print("Name: {s}\n Location: {d}\n Exists: {any}\n Defualt value: {s}\n Filled Optional: {s}\n", .{ parsed_cli.name, parsed_cli.location, parsed_cli.exists, parsed_cli.default_name, parsed_cli.filled_optional orelse "badvalue" });
+}
+```
+Compile with `zig build` then run the cli command:
+```
+./zig-out/bin/snek -name="test mctest" -location=420 -exists=true
 ```
 
 #### Optionals
