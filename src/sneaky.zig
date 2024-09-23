@@ -156,19 +156,19 @@ pub fn Snek(comptime CliInterface: type) type {
 
                 switch (field_type) {
                     .Bool => {
-                        @field(&interface, field.name) = try self.parseBool(serialized_arg.key);
+                        @field(&interface, field.name) = try self.parseBool(serialized_arg.value);
                     },
                     .Int => {
-                        @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.key);
+                        @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.value);
                     },
                     .Float => {
-                        @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.key);
+                        @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.value);
                     },
                     .Pointer => {
                         // .Pointer is for strings since the underlying type is []const u8 which is a .Pointer type
                         if (field_type.Pointer.size == .Slice and field_type.Pointer.child == u8) {
                             // At this point, just store the string.
-                            @field(&interface, field.name) = serialized_arg.key;
+                            @field(&interface, field.name) = serialized_arg.value;
                         }
                     },
                     .Struct => {

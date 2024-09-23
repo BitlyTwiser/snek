@@ -15,6 +15,6 @@ pub fn main() !void {
     var cli = try snek(T).init(std.heap.page_allocator);
     const parsed_cli = try cli.parse();
 
-    // Necessary is skipped here
+    // Necessary is skipped here to showcase optional values being ignored
     std.debug.print("{s} {d} {any} {s} {s}", .{ parsed_cli.name, parsed_cli.location, parsed_cli.exists, parsed_cli.default_name, parsed_cli.filled_optional orelse "badvalue" });
 }
