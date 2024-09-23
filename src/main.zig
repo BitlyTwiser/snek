@@ -11,6 +11,8 @@ const T = struct {
     default_name: []const u8 = "test default name",
 };
 
+// Example command after compilation:
+// ./zig-out/bin/snek -name="test mctest" -location=420 -exists=true
 pub fn main() !void {
     var cli = try snek(T).init(std.heap.page_allocator);
     const parsed_cli = try cli.parse();
