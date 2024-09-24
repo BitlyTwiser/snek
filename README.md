@@ -21,7 +21,7 @@ A simple CLI parser building CLI applications in Zig
 ### Usage
 Add snek to your Zig project with Zon:
 ```
-zig fetch --save https://github.com/BitlyTwiser/snek/archive/refs/tags/0.1.0.tar.gz
+zig fetch --save https://github.com/BitlyTwiser/snek/archive/refs/tags/v0.1.0.tar.gz
 ```
 
 Add the following to build.zig file:
