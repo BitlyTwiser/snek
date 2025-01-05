@@ -5,6 +5,8 @@ const snek = @import("lib.zig").Snek;
 const T = struct {
     name: []const u8,
     location: u32,
+    optional_location: ?u32,
+    opt_int: ?usize,
     exists: bool,
     necessary: ?bool,
     filled_optional: ?[]const u8,
@@ -18,5 +20,5 @@ pub fn main() !void {
     const parsed_cli = try cli.parse();
 
     // Necessary is skipped here to showcase optional values being ignored
-    std.debug.print("Name: {s}\n Location: {d}\n Exists: {any}\n Defualt value: {s}\n Filled Optional: {s}\n", .{ parsed_cli.name, parsed_cli.location, parsed_cli.exists, parsed_cli.default_name, parsed_cli.filled_optional orelse "badvalue" });
+    std.debug.print("Name: {s}\n Location: {d}\n Exists: {any}\n Defualt value: {s}\n Filled Optional: {s}\n Optional int: {d}\n Necessary: {any}", .{ parsed_cli.name, parsed_cli.location, parsed_cli.exists, parsed_cli.default_name, parsed_cli.filled_optional orelse "badvalue", parsed_cli.opt_int orelse 420, parsed_cli.necessary orelse false });
 }

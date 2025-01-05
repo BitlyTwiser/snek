@@ -166,10 +166,10 @@ pub fn Snek(comptime CliInterface: type) type {
                             @field(&interface, field.name) = try self.parseBool(serialized_arg.value);
                         },
                         .Int => {
-                            @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.value);
+                            @field(&interface, field.name) = try self.parseNumeric(@Type(field_type), serialized_arg.value);
                         },
                         .Float => {
-                            @field(&interface, field.name) = try self.parseNumeric(field.type, serialized_arg.value);
+                            @field(&interface, field.name) = try self.parseNumeric(@Type(field_type), serialized_arg.value);
                         },
                         .Pointer => {
                             // .Pointer is for strings since the underlying type is []const u8 which is a .Pointer type
